@@ -47,7 +47,7 @@ DOCUMENTS = [
     {
         "title": "Shifting Gears",
         "content": "Your Googlecar has an automatic transmission...",
-    }
+    },
 ]
 
 
@@ -94,20 +94,52 @@ class EmbeddingService:
             logger.error(f"Error creating embedding: {str(e)}")
             raise
 
+    def search_documents(
+        self, query: str, df: pd.DataFrame, top_k: int = 3
+    ) -> pd.DataFrame:
+        """Search documents using dot product similarity."""
+        query_embedding = genai.embed_content(
+            model=self.model, content=query, task_type="retrieval_query"
+        )
 
-def create_embeddings_df(documents: List[Dict], service: EmbeddingService) -> pd.DataFrame:
+        # Calculate dot products
+        dot_products = np.dot(
+            np.stack(df["embedding"].to_numpy()), query_embedding["embedding"]
+        )
+
+        # Add scores and sort
+        df["score"] = dot_products
+        results = df.sort_values("score", ascending=False).head(top_k)
+        return results[["title", "content", "score"]]
+
+
+def create_embeddings_df(
+    documents: List[Dict], service: EmbeddingService
+) -> pd.DataFrame:
     """Create DataFrame with document metadata and embeddings."""
     rows = []
     for doc_dict in documents:
         doc = Document(title=doc_dict["title"], content=doc_dict["content"])
         embedding = service.create_embedding(doc)
-        rows.append({
-            "title": doc.title,
-            "content": doc.content,
-            "embedding": embedding,
-            "embedding_size": len(embedding)
-        })
+        rows.append(
+            {
+                "title": doc.title,
+                "content": doc.content,
+                "embedding": embedding,
+                "embedding_size": len(embedding),
+            }
+        )
     return pd.DataFrame(rows)
+
+
+def format_search_results(results: pd.DataFrame) -> str:
+    """Format search results for display."""
+    output = []
+    for _, row in results.iterrows():
+        output.append(f"Title: {row['title']}")
+        output.append(f"Score: {row['score']:.4f}")
+        output.append(f"Content: {row['content'][:200]}...\n")
+    return "\n".join(output)
 
 
 def main():
@@ -119,9 +151,15 @@ def main():
             print(model)
 
         df = create_embeddings_df(DOCUMENTS, service)
-        
+
         print("\nDocument Embeddings DataFrame:")
         print(df[["title", "embedding_size"]].to_string())
+
+        # Search example
+        query = "How do you shift gears in the Google car?"
+        results = service.search_documents(query, df)
+        print("\nSearch Results:")
+        print(format_search_results(results))
     except Exception as e:
         logger.error(f"Application error: {str(e)}")
         raise
