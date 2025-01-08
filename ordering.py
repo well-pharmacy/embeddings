@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import google.generativeai as genai
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 from datetime import datetime
 from langdetect import detect
@@ -42,13 +42,14 @@ class PrescriptionError(PharmacyException):
 @dataclass(frozen=True)
 class PharmacyConfig:
     """Configuration settings for pharmacy system."""
+
     api_key: str
     model_name: str = DEFAULT_MODEL
     min_stock_threshold: int = 10
     max_order_quantity: int = 100
     require_prescription_verification: bool = True
     log_level: int = logging.INFO
-    
+
     def __post_init__(self):
         """Validate configuration settings."""
         if not self.api_key:
@@ -61,16 +62,19 @@ class PharmacyConfig:
 
 class OrderLimitError(PharmacyException):
     """Raised when order exceeds allowed limits."""
+
     pass
 
 
 class PrescriptionValidationError(PrescriptionError):
     """Raised when prescription validation fails."""
+
     pass
 
 
 class StockThresholdError(InventoryError):
     """Raised when stock falls below minimum threshold."""
+
     pass
 
 
@@ -123,6 +127,31 @@ class Order:
     customer_id: str
     status: str
     timestamp: datetime
+
+
+@dataclass
+class PharmacyMetrics:
+    """Track important pharmacy metrics."""
+
+    total_orders: int = 0
+    failed_orders: int = 0
+    prescription_validations: int = 0
+    invalid_prescriptions: int = 0
+    low_stock_alerts: int = 0
+    api_calls: int = 0
+    average_response_time: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert metrics to dictionary format."""
+        return {
+            "total_orders": self.total_orders,
+            "failed_orders": self.failed_orders,
+            "prescription_validations": self.prescription_validations,
+            "invalid_prescriptions": self.invalid_prescriptions,
+            "low_stock_alerts": self.low_stock_alerts,
+            "api_calls": self.api_calls,
+            "average_response_time": self.average_response_time,
+        }
 
 
 class InventoryManager:
@@ -625,6 +654,93 @@ INVENTORY_ITEMS = [
     },
 ]
 
+INVENTORY = [
+    {
+        "name": "Amoxicillin 500mg",
+        "requires_prescription": True,
+        "unit_price": 24.99,
+        "quantity_available": 200,
+    },
+    {
+        "name": "Aspirin 81mg",
+        "requires_prescription": False,
+        "unit_price": 9.99,
+        "quantity_available": 500,
+    },
+]
+
+
+def create_order(
+    item_name: str,
+    quantity: int,
+    customer_id: str,
+    rx_number: Optional[str] = None,
+    metrics: Optional[PharmacyMetrics] = None,
+) -> Order:
+    """Create a new order with validation."""
+
+    if metrics:
+        metrics.total_orders += 1
+
+    # Generate order ID
+    order_id = f"ORD-{uuid.uuid4().hex[:8]}"
+
+    # Validate item exists in inventory
+    item = next((i for i in INVENTORY_ITEMS if i["name"] == item_name), None)
+    if not item:
+        raise ValueError(f"Item not found: {item_name}")
+
+    # Check prescription requirement
+    if item["requires_prescription"]:
+        if not rx_number:
+            raise ValueError("Prescription required for this medication")
+        if not validate_prescription(rx_number):
+            if metrics:
+                metrics.invalid_prescriptions += 1
+            raise ValueError("Invalid prescription")
+
+    # Verify stock
+    if quantity > item["quantity_available"]:
+        if metrics:
+            metrics.low_stock_alerts += 1
+        raise ValueError("Insufficient stock")
+
+    # Calculate total price
+    total_price = item["unit_price"] * quantity
+
+    # Create order with current timestamp
+    order = Order(
+        order_id=order_id,
+        item_name=item_name,
+        quantity=quantity,
+        total_price=total_price,
+        prescription_id=rx_number,
+        customer_id=customer_id,
+        status="PENDING",
+        timestamp=datetime.now(),
+    )
+
+    return order
+
+
+def validate_prescription(rx_number: str) -> bool:
+    """Mock prescription validation."""
+    # In real implementation, would call external validation service
+    return bool(rx_number and rx_number.startswith("RX"))
+
+
+def check_inventory(item_name: str, quantity: int) -> bool:
+    """Mock inventory check."""
+    # In real implementation, would check actual inventory
+    return True
+
+
+def calculate_price(item_name: str, quantity: int) -> float:
+    """Mock price calculation."""
+    # In real implementation, would look up actual prices
+    base_price = 10.0
+    return base_price * quantity
+
 
 def main():
     """Main demo function with ordering capability."""
@@ -680,6 +796,65 @@ def main():
         rx_number="RX123456",
     )
     print(f"Assistant: {order_with_rx}")
+
+    # Initialize metrics
+    metrics = PharmacyMetrics()
+
+    try:
+        # Basic order example
+        order_no_rx = create_order(
+            item_name="Aspirin 81mg", quantity=2, customer_id="CUST789"
+        )
+        metrics.total_orders += 1
+        print(f"Basic order: {order_no_rx}")
+
+        # Order with prescription
+        order_with_rx = create_order(
+            item_name="Amoxicillin 500mg",
+            quantity=1,
+            customer_id="CUST123",
+            rx_number="RX123456",
+        )
+        metrics.total_orders += 1
+        metrics.prescription_validations += 1
+        print(f"Order with prescription: {order_with_rx}")
+
+        # Print metrics summary
+        print("\nPharmacy Metrics Summary:")
+        for key, value in metrics.to_dict().items():
+            print(f"{key}: {value}")
+
+    except Exception as e:
+        metrics.failed_orders += 1
+        logger.error(f"Error processing orders: {str(e)}")
+        raise
+
+    metrics = PharmacyMetrics()
+
+    try:
+        # Basic order with non-prescription item
+        order_no_rx = create_order(
+            item_name="Aspirin 81mg",  # Now exists in inventory
+            quantity=2,
+            customer_id="CUST789",
+        )
+        metrics.total_orders += 1
+        print(f"Basic order created: {order_no_rx}")
+
+        # Order with prescription
+        order_with_rx = create_order(
+            item_name="Amoxicillin 500mg",
+            quantity=1,
+            customer_id="CUST123",
+            rx_number="RX123456",
+        )
+        metrics.total_orders += 1
+        print(f"Prescription order created: {order_with_rx}")
+
+    except ValueError as e:
+        metrics.failed_orders += 1
+        logger.error(f"Order creation failed: {str(e)}")
+        raise
 
 
 if __name__ == "__main__":
