@@ -7,6 +7,10 @@ import google.generativeai as genai
 import logging
 from typing import List, Dict
 from dataclasses import dataclass
+from langdetect import detect
+from googletrans import Translator
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 # Constants
 DEFAULT_MODEL = "models/embedding-001"
@@ -147,6 +151,48 @@ class PharmacyQAService:
         return response.text
 
 
+class MultilingualQAService(PharmacyQAService):
+    """Multilingual question answering service."""
+    
+    def __init__(self, embedding_service: PharmacyEmbeddingService):
+        super().__init__(embedding_service)
+        self.translator = Translator()
+    
+    def format_arabic_text(self, text: str) -> str:
+        """Format Arabic text for proper display."""
+        reshaped_text = arabic_reshaper.reshape(text)
+        return get_display(reshaped_text)
+    
+    def answer_query(self, query: str, documents_df: pd.DataFrame) -> str:
+        """Process multilingual queries and return answers."""
+        try:
+            # Detect language
+            lang = detect(query)
+            
+            # Translate if not English
+            if lang != 'en':
+                eng_query = self.translator.translate(query, dest='en').text
+            else:
+                eng_query = query
+            
+            # Get answer in English
+            answer = super().answer_query(eng_query, documents_df)
+            
+            # Translate back if needed
+            if lang != 'en':
+                answer = self.translator.translate(answer, dest=lang).text
+                
+                # Special handling for Arabic
+                if lang == 'ar':
+                    answer = self.format_arabic_text(answer)
+            
+            return answer
+            
+        except Exception as e:
+            logger.error(f"Error processing multilingual query: {str(e)}")
+            return "Sorry, there was an error processing your question."
+
+
 def create_inventory_df(
     items: List[Dict], service: PharmacyEmbeddingService
 ) -> pd.DataFrame:
@@ -178,28 +224,26 @@ def format_inventory_results(results: pd.DataFrame) -> str:
 
 
 def main():
-    """Main demo function."""
+    """Main demo function with multilingual support."""
     load_dotenv()
     api_key = os.getenv("GOOGLE_API_KEY")
 
     # Initialize services
     embedding_service = PharmacyEmbeddingService(api_key)
-    qa_service = PharmacyQAService(embedding_service)
+    qa_service = MultilingualQAService(embedding_service)
 
     # Create inventory database
     df = create_inventory_df(INVENTORY_ITEMS, embedding_service)
 
-    # Demo queries
+    # Test queries in different languages
     queries = [
-        "Do you have any pain relievers in stock?",
-        "Where can I find blood glucose testing supplies?",
-        "What antibiotics do you carry?",
+        "كيف أتحكم في درجة الحرارة في السيارة؟",  # Arabic
+        "How do I control the temperature?",        # English
     ]
-
-    print("\nPharmacy Inventory Query Demo:")
+    
     for query in queries:
-        print(f"\nQ: {query}")
         answer = qa_service.answer_query(query, df)
+        print(f"\nQ: {query}")
         print(f"A: {answer}\n")
         print("-" * 80)
 
