@@ -34,6 +34,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# Sample documents
+DOCUMENTS = [
+    {
+        "title": "Operating the Climate Control System",
+        "content": "Your Googlecar has a climate control system...",
+    },
+    {
+        "title": "Touchscreen",
+        "content": "Your Googlecar has a large touchscreen display...",
+    },
+    {
+        "title": "Shifting Gears",
+        "content": "Your Googlecar has an automatic transmission...",
+    }
+]
+
+
 class EmbeddingService:
     """Service class to handle Google GenerativeAI embeddings."""
 
@@ -78,6 +95,21 @@ class EmbeddingService:
             raise
 
 
+def create_embeddings_df(documents: List[Dict], service: EmbeddingService) -> pd.DataFrame:
+    """Create DataFrame with document metadata and embeddings."""
+    rows = []
+    for doc_dict in documents:
+        doc = Document(title=doc_dict["title"], content=doc_dict["content"])
+        embedding = service.create_embedding(doc)
+        rows.append({
+            "title": doc.title,
+            "content": doc.content,
+            "embedding": embedding,
+            "embedding_size": len(embedding)
+        })
+    return pd.DataFrame(rows)
+
+
 def main():
     """Main entry point for the application."""
     try:
@@ -86,13 +118,10 @@ def main():
         for model in models:
             print(model)
 
-        doc = Document(
-            title="The next generation of AI for developers and Google Workspace",
-            content="Gemini API & Google AI Studio: An approachable way to explore and prototype with generative AI applications",
-        )
-
-        embedding = service.create_embedding(doc)
-        print(f"Embedding shape: {embedding.shape}")
+        df = create_embeddings_df(DOCUMENTS, service)
+        
+        print("\nDocument Embeddings DataFrame:")
+        print(df[["title", "embedding_size"]].to_string())
     except Exception as e:
         logger.error(f"Application error: {str(e)}")
         raise
