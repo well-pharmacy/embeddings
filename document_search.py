@@ -113,6 +113,43 @@ class EmbeddingService:
         return results[["title", "content", "score"]]
 
 
+class QAService:
+    """Service for question answering using document search and Gemini."""
+
+    def __init__(self, embedding_service: EmbeddingService):
+        self.embedding_service = embedding_service
+        self.gen_model = genai.GenerativeModel("gemini-1.5-pro-latest")
+
+    def make_prompt(self, query: str, relevant_passage: str) -> str:
+        """Create prompt for Gemini model."""
+        escaped = relevant_passage.replace("'", "").replace('"', "").replace("\n", " ")
+        return textwrap.dedent("""
+            You are a helpful and informative bot that answers questions using text from the reference passage included below. \
+            Be sure to respond in a complete sentence, being comprehensive, including all relevant background information. \
+            However, you are talking to a non-technical audience, so be sure to break down complicated concepts and \
+            strike a friendly and conversational tone. \
+            If the passage is irrelevant to the answer, you may ignore it.
+            
+            QUESTION: '{query}'
+            PASSAGE: '{relevant_passage}'
+            
+            ANSWER:
+        """).format(query=query, relevant_passage=escaped)
+
+    def answer_question(self, query: str, documents_df: pd.DataFrame) -> str:
+        """Search documents and generate answer."""
+        # Find most relevant document
+        results = self.embedding_service.search_documents(query, documents_df, top_k=1)
+        if results.empty:
+            return "No relevant information found."
+
+        # Generate answer
+        relevant_text = results.iloc[0]["content"]
+        prompt = self.make_prompt(query, relevant_text)
+        response = self.gen_model.generate_content(prompt)
+        return response.text
+
+
 def create_embeddings_df(
     documents: List[Dict], service: EmbeddingService
 ) -> pd.DataFrame:
@@ -143,26 +180,30 @@ def format_search_results(results: pd.DataFrame) -> str:
 
 
 def main():
-    """Main entry point for the application."""
-    try:
-        service = EmbeddingService(API_KEY)
-        models = service.list_embedding_models()
-        for model in models:
-            print(model)
+    """Main demo function."""
+    load_dotenv()
+    api_key = os.getenv("GOOGLE_API_KEY")
 
-        df = create_embeddings_df(DOCUMENTS, service)
+    # Initialize services
+    embedding_service = EmbeddingService(api_key)
+    qa_service = QAService(embedding_service)
 
-        print("\nDocument Embeddings DataFrame:")
-        print(df[["title", "embedding_size"]].to_string())
+    # Create document database
+    df = create_embeddings_df(DOCUMENTS, embedding_service)
 
-        # Search example
-        query = "How do you shift gears in the Google car?"
-        results = service.search_documents(query, df)
-        print("\nSearch Results:")
-        print(format_search_results(results))
-    except Exception as e:
-        logger.error(f"Application error: {str(e)}")
-        raise
+    # Demo Q&A
+    questions = [
+        "How do I control the temperature in the car?",
+        "What are the different gear positions?",
+        "How do I use the touchscreen?",
+    ]
+
+    print("\nQ&A Demo:")
+    for question in questions:
+        print(f"\nQ: {question}")
+        answer = qa_service.answer_question(question, df)
+        print(f"A: {answer}\n")
+        print("-" * 80)
 
 
 if __name__ == "__main__":
